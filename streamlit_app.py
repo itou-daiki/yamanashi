@@ -98,6 +98,13 @@ EXPLANATION = """
 以上から、今回の原因は **①LANケーブルの接触不良・断線（HUB〜デスクトップPC間）** と判断できます。
 """
 
+INVESTIGATION_TASKS = [
+    ("a", "ルーターに ping を送る"),
+    ("b", "無線LANアクセスポイントに ping を送る"),
+    ("d", "プリンタに ping を送る"),
+    ("c", "デスクトップPCに ping を送る"),
+]
+
 
 def log(action: str):
     st.session_state.action_log.append(action)
@@ -234,80 +241,86 @@ if st.session_state.stage == "trouble":
 
 # ---- investigate ----
 if st.session_state.stage in ("investigate", "analysis", "answered"):
-    st.subheader("① コマンドプロンプトで ping を実行する")
-    st.write("ノートPCから、疑わしい機器に向けて ping を送ってみましょう。")
+        st.subheader("① コマンドプロンプトで ping を実行する")
+        st.write("ノートPCから、疑わしい機器に向けて ping を送ってみましょう。")
 
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        target_key = st.selectbox(
-            "ping先を選択",
-            options=list(DEVICES.keys()),
-            format_func=lambda k: f"{k}. {DEVICES[k]['name']} ({DEVICES[k]['ip']})",
-            key="ping_target",
-            disabled=(st.session_state.stage != "investigate"),
-        )
-    with col2:
-        st.write("")
-        st.write("")
-        ping_clicked = st.button(
-            "▶ ping実行", disabled=(st.session_state.stage != "investigate"), key="ping_button"
-        )
+        with st.expander("🔎 調査チェックリスト", expanded=True):
+            for key, task_text in INVESTIGATION_TASKS:
+                done = key in st.session_state.ping_history
+                checkbox = "☑" if done else "☐"
+                st.markdown(f"- {checkbox} {task_text}")
+            led_checkbox = "☑" if st.session_state.led_checked else "☐"
+            st.markdown(f"- {led_checkbox} HUBのポートランプを確認する")
 
-    if ping_clicked and st.session_state.stage == "investigate":
-        animate_ping(target_key)
-    elif target_key in st.session_state.ping_history:
-        render_saved_ping(target_key)
+        cols = st.columns(2)
+        for idx, (key, device) in enumerate(DEVICES.items()):
+            with cols[idx % 2]:
+                button_label = f"▶ {device['name']} ({device['ip']}) に ping"
+                if st.button(button_label, key=f"ping_button_{key}", disabled=(st.session_state.stage != "investigate")):
+                    animate_ping(key)
 
-    with st.expander("これまでに ping した機器の結果一覧"):
-        if not st.session_state.ping_history:
-            st.caption("まだ ping を実行していません。")
+        if st.session_state.ping_history:
+            latest_key = list(st.session_state.ping_history.keys())[-1]
+            render_saved_ping(latest_key)
         else:
-            rows = []
-            for key, device in DEVICES.items():
-                if key in st.session_state.ping_history:
-                    result = "〇（応答あり）" if device["reachable"] else "×（タイムアウト）"
-                else:
-                    result = "未確認"
-                rows.append({"機器": f"{key}. {device['name']}", "IPアドレス": device["ip"], "結果": result})
-            st.table(rows)
+            st.caption("まずは上のボタンから調査したい機器に ping を送ってみましょう。")
 
-    st.write("")
-    st.subheader("② HUBのポートランプを目視で確認する")
-    st.write("ping だけでなく、実機のランプ（LED）も手がかりになります。HUBの前面を確認してみましょう。")
+        with st.expander("これまでに ping した機器の結果一覧"):
+            if not st.session_state.ping_history:
+                st.caption("まだ ping を実行していません。")
+            else:
+                rows = []
+                for key, device in DEVICES.items():
+                    if key in st.session_state.ping_history:
+                        result = "〇（応答あり）" if device["reachable"] else "×（タイムアウト）"
+                    else:
+                        result = "未確認"
+                    rows.append({"機器": f"{key}. {device['name']}", "IPアドレス": device["ip"], "結果": result})
+                st.table(rows)
 
-    if st.session_state.stage == "investigate":
-        if st.button("🔌 HUBのランプを確認する"):
-            st.session_state.led_checked = True
-            log("HUBのポートランプを確認 → デスクトップPCのポートのみ消灯")
+        st.write("")
+        st.subheader("② HUBのポートランプを目視で確認する")
+        st.write("ping だけでなく、実機のランプ（LED）も手がかりになります。HUBの前面を確認してみましょう。")
 
-    if st.session_state.led_checked:
-        led_cols = st.columns(4)
-        for port, col in zip(HUB_PORTS, led_cols):
-            with col:
-                icon = "🟢" if port["ok"] else "⚫"
-                status = "点灯（リンクOK）" if port["ok"] else "消灯（リンクなし）"
-                st.markdown(
-                    f'<div class="led-box"><div style="font-size:1.6rem">{icon}</div>'
-                    f'<div style="font-size:0.75rem">{port["label"]}</div>'
-                    f'<div style="font-size:0.7rem;color:#aaa">{status}</div></div>',
-                    unsafe_allow_html=True,
-                )
+        if st.session_state.stage == "investigate":
+            if not st.session_state.led_checked:
+                if st.button("🔌 HUBのランプを確認する"):
+                    st.session_state.led_checked = True
+                    log("HUBのポートランプを確認 → デスクトップPCのポートのみ消灯")
+            else:
+                st.success("HUBのランプ確認が完了しました。")
 
-    if st.session_state.action_log:
-        with st.expander("📝 調査ログ", expanded=False):
-            for i, entry in enumerate(st.session_state.action_log, 1):
-                st.write(f"{i}. {entry}")
+        if st.session_state.led_checked:
+            led_cols = st.columns(4)
+            for port, col in zip(HUB_PORTS, led_cols):
+                with col:
+                    icon = "🟢" if port["ok"] else "⚫"
+                    status = "点灯（リンクOK）" if port["ok"] else "消灯（リンクなし）"
+                    st.markdown(
+                        f'<div class="led-box"><div style="font-size:1.6rem">{icon}</div>'
+                        f'<div style="font-size:0.75rem">{port["label"]}</div>'
+                        f'<div style="font-size:0.7rem;color:#aaa">{status}</div></div>',
+                        unsafe_allow_html=True,
+                    )
 
-    all_pinged = len(st.session_state.ping_history) == len(DEVICES)
-    if st.session_state.stage == "investigate":
-        if not all_pinged:
-            remaining = len(DEVICES) - len(st.session_state.ping_history)
-            st.caption(f"あと {remaining} 件の機器に ping を実行すると、原因を推定できるようになります。")
-        else:
-            st.success("すべての機器の疎通確認が完了しました。原因を推定してみましょう。")
-            if st.button("➡ 原因の推定へ進む", type="primary"):
-                st.session_state.stage = "analysis"
-                st.rerun()
+        if st.session_state.action_log:
+            with st.expander("📝 調査ログ", expanded=False):
+                for i, entry in enumerate(st.session_state.action_log, 1):
+                    st.write(f"{i}. {entry}")
+
+        all_pinged = len(st.session_state.ping_history) == len(DEVICES)
+        if st.session_state.stage == "investigate":
+            if not all_pinged or not st.session_state.led_checked:
+                remaining_devices = [DEVICES[key]['name'] for key in DEVICES if key not in st.session_state.ping_history]
+                if remaining_devices:
+                    st.caption(f"まだ ping していない機器: {', '.join(remaining_devices)}")
+                if not st.session_state.led_checked:
+                    st.caption("HUBのランプ確認も忘れずに行いましょう。")
+            else:
+                st.success("すべての調査が揃いました。原因を考えてみましょう。")
+                if st.button("➡ 原因の推定へ進む", type="primary"):
+                    st.session_state.stage = "analysis"
+                    st.rerun()
 
 # ---- analysis ----
 if st.session_state.stage == "analysis":
